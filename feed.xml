@@ -2,6 +2,7 @@
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
   <channel>
     <title>Efshar Letaken - Rab Igal Snertz</title>
+    <itunes:type>serial</itunes:type>
     <description>Shiurim y cursos de Torá en español con el Rab Igal Snertz. Musar y tikún hamidot, los pasos del cambio, Sefer HaJinuj, Mishlé, emuná, kaas, shalom bait y crecimiento personal a la luz de la Torá - Otzar HaTorah.</description>
     <link>https://rabmeireliyahu.github.io/efshar</link>
     <language>es</language>
