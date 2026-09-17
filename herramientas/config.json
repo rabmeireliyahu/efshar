@@ -1,0 +1,23 @@
+{
+  "titulo": "Efshar Letaken - Rab Igal Snertz",
+  "descripcion": "Shiurim y cursos de Torá en español con el Rab Igal Snertz. Musar y tikún hamidot, los pasos del cambio, Sefer HaJinuj, Mishlé, emuná, kaas, shalom bait y crecimiento personal a la luz de la Torá - Otzar HaTorah.",
+  "autor": "Rab Igal Snertz",
+  "email": "rabmeireliyahu@gmail.com",
+  "idioma": "es",
+  "modo_whatsapp": true,
+  "rss_original": "https://anchor.fm/s/10b0bd6f8/podcast/rss",
+  "archive_id": "efshar-letaken-igal-snertz",
+  "github_user": "rabmeireliyahu",
+  "github_repo": "efshar",
+  "solo_agregar": true,
+  "carpeta_whatsapp": "C:\\OTZAR\\efshar\\subir_a_mano",
+  "portadas": {
+    "_nota": "Si el titulo del episodio EMPIEZA con la clave (sin contar el '12. ' del inicio), lleva esa portada. Si no empieza con ninguna, usa la portada general del show.",
+    "Mishlei": "portada_mishlei.jpeg",
+    "Pirke Avot": "portada_pirkeavot.jpeg",
+    "Midot": "portada_midot.jpeg",
+    "Los pasos del cambio": "portada_pasos.jpeg",
+    "Ideas que te cambian": "portada_ideas.jpeg",
+    "Ejercicios Pr": "portada_ninos.jpeg"
+  }
+}
