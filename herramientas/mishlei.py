@@ -262,6 +262,68 @@ def convertir(ff, fuentes, dest):
     return subprocess.run(cmd).returncode
 
 
+ORIGEN_JSON_NOMBRE = "_origen.json"   # en DESTINO: de que archivo(s) salio cada mp3
+
+
+def cargar_origen():
+    """titulo -> lista de archivos fuente de ese mp3. Si no existe (mp3 hechos con
+    una version vieja), se reconstruye del ultimo mishlei_orden.json."""
+    ruta = DESTINO / ORIGEN_JSON_NOMBRE
+    if ruta.exists():
+        try:
+            return json.loads(ruta.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    origen = {}
+    if ORDEN_JSON.exists():
+        try:
+            viejo = json.loads(ORDEN_JSON.read_text(encoding="utf-8"))
+            for c in viejo.get("clases", []):
+                if (DESTINO / (c["titulo"] + ".mp3")).exists():
+                    origen[c["titulo"]] = c["archivos"]
+            if origen:
+                print(f" (primera vez con _origen.json: registre {len(origen)} mp3 ya hechos segun mishlei_orden.json)")
+        except Exception:
+            pass
+    return origen
+
+
+def guardar_origen(origen):
+    (DESTINO / ORIGEN_JSON_NOMBRE).write_text(json.dumps(origen, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def reacomodar(clases, origen):
+    """Si la numeracion se corrio (entro o salio una clase), RENOMBRA los mp3
+    ya hechos en vez de reconvertirlos. Devuelve el origen actualizado."""
+    existe = lambda t: (DESTINO / (t + ".mp3")).exists()
+    por_fuente = {tuple(a): t for t, a in origen.items() if existe(t)}
+    plan = {c["titulo"]: tuple(c["archivos"]) for c in clases}
+    movs = [(por_fuente[f], t) for t, f in plan.items() if f in por_fuente and por_fuente[f] != t]
+    if not movs:
+        return origen
+    print(f" La numeracion se corrio: renombro {len(movs)} mp3 ya hechos (no los reconvierto).")
+    # fase 1: apartar todos los que se mueven
+    for viejo, nuevo in movs:
+        (DESTINO / (viejo + ".mp3")).rename(DESTINO / (viejo + ".mp3.mover"))
+    # fase 2: ponerlos en su nombre nuevo
+    for viejo, nuevo in movs:
+        dest = DESTINO / (nuevo + ".mp3")
+        if dest.exists():          # ahi habia un mp3 que ya no corresponde a ese numero
+            dest.unlink()
+        (DESTINO / (viejo + ".mp3.mover")).rename(dest)
+        print(f"   {viejo}.mp3  ->  {nuevo}.mp3")
+    nuevo_origen = {t: a for t, a in origen.items() if existe(t) and t not in {v for v, _ in movs}}
+    for viejo, nuevo in movs:
+        nuevo_origen[nuevo] = origen[viejo]
+    # mp3 que quedaron con un numero que ya no existe en el plan (salio una clase): fuera
+    for t in list(nuevo_origen):
+        if t not in plan:
+            print(f"   {t}.mp3 ya no corresponde a ninguna clase: lo quito")
+            (DESTINO / (t + ".mp3")).unlink()
+            del nuevo_origen[t]
+    return nuevo_origen
+
+
 def preparar():
     clases, descartadas, avisos = escanear()
     guardar(clases, descartadas, avisos)
@@ -275,13 +337,19 @@ def preparar():
     if descartadas or avisos:
         print(f" Hay {len(descartadas)} descartadas y {len(avisos)} avisos en mishlei_orden.txt; sigo de todos modos.")
     print("=" * 60)
+    origen = cargar_origen()
+    origen = reacomodar(clases, origen)
+    guardar_origen(origen)
     hechos, fallos = 0, []
     for c in clases:
         dest = DESTINO / (c["titulo"] + ".mp3")
-        if dest.exists() and dest.stat().st_size > 100_000:
+        if dest.exists() and dest.stat().st_size > 100_000 and origen.get(c["titulo"]) == c["archivos"]:
             print(f" ya estaba   {dest.name}")
             hechos += 1
             continue
+        if dest.exists():
+            print(f" {dest.name} venia de otra grabacion: lo rehago")
+            dest.unlink()
         print(f" convirtiendo {c['titulo']}  <-  {c['carpeta']}\\{c['nombres']} ({mb(c['bytes'])}) ...", flush=True)
         rc = convertir(ff, [Path(a) for a in c["archivos"]], dest)
         if rc != 0 or not dest.exists() or dest.stat().st_size < 100_000:
@@ -298,6 +366,8 @@ def preparar():
             os.utime(dest, (t, t))
         except Exception:
             pass
+        origen[c["titulo"]] = c["archivos"]
+        guardar_origen(origen)
         hechos += 1
     print()
     print("=" * 60)
