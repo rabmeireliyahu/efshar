@@ -80,8 +80,11 @@ def main():
     base["excluir_titulo"] = TITULO
     curso = {k: v for k, v in base.items()
              if k not in ("excluir_titulo", "pausado", "juntar", "max_anuncios", "filtro_titulo",
-                          "en_orden", "uno_por_dia", "sin_filtro_fecha", "feed")}
+                          "en_orden", "uno_por_dia", "sin_filtro_fecha", "feed", "solo_ultimos")}
+    # "curso": true y sin "solo_ultimos": mantenimiento.py (sin_atrasos) NUNCA
+    # memoriza nada de esta entrada; si lo hiciera, se saltaria clases.
     curso.update({
+        "curso": True,
         "feed": FEED,
         "filtro_titulo": TITULO,
         "en_orden": True,
