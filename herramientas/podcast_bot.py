@@ -397,26 +397,45 @@ def subir_feed_a_github():
                                    f"Robot: feed {datetime.now():%d/%m/%Y %H:%M}")
 
 
-def subir_portada(ruta):
-    """python podcast_bot.py portada C:\\OTZAR\\efshar\\portadas\\portada_mishlei.jpeg
-    Sube la imagen a la raiz del repo (junto a portada.jpg) con su mismo nombre.
+CARPETA_PORTADAS = Path(r"C:\OTZAR\efshar\portadas")
+IMAGENES = (".jpg", ".jpeg", ".png")
+
+
+def subir_portada(ruta, nombre_en_repo=None):
+    """python podcast_bot.py portada <imagen> [nombre_en_repo]
+       python podcast_bot.py portada C:\\OTZAR\\efshar\\portadas\\mishlei.jpg portada_mishlei.jpeg
+    Sube la imagen a la raiz del repo (junto a portada.jpg). Si no das el
+    segundo nombre, queda con el mismo nombre del archivo. Si solo das el
+    nombre sin carpeta, la busca en C:\\OTZAR\\efshar\\portadas.
     Luego, en config.json -> "portadas", apunta la serie a ese nombre."""
     p = Path(ruta)
+    if not p.is_file() and not p.is_absolute() and (CARPETA_PORTADAS / ruta).is_file():
+        p = CARPETA_PORTADAS / ruta
     if not p.is_file():
         log(f"ERROR: no encuentro la imagen {p}")
+        if CARPETA_PORTADAS.is_dir():
+            hay = sorted(x.name for x in CARPETA_PORTADAS.iterdir() if x.suffix.lower() in IMAGENES)
+            log(f"En {CARPETA_PORTADAS} hay: " + (", ".join(hay) if hay else "(ninguna imagen)"))
+            log("Usa el nombre exacto, por ejemplo:")
+            log(f'   python podcast_bot.py portada "{hay[0] if hay else "mi_imagen.jpg"}" portada_mishlei.jpeg')
         return False
-    if p.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+    if p.suffix.lower() not in IMAGENES:
         log("ERROR: la portada tiene que ser .jpg, .jpeg o .png")
         return False
+    nombre = nombre_en_repo or p.name
+    if Path(nombre).suffix.lower() not in IMAGENES:
+        nombre += p.suffix.lower()
     if p.stat().st_size > 2_000_000:
         log("AVISO: pesa mas de 2 MB; Spotify la acepta pero conviene achicarla.")
-    ok = _subir_archivo_a_github(p, p.name, f"portada {p.stem}")
+    ok = _subir_archivo_a_github(p, nombre, f"portada {Path(nombre).stem}")
     if ok:
-        log(f"Queda en: {URL_FEED_BASE}/{p.name}")
-        log(f"En config.json -> \"portadas\" pon la serie apuntando a \"{p.name}\" (si no esta ya).")
+        log(f"Queda en: {URL_FEED_BASE}/{nombre}")
         usadas = set((CFG.get("portadas") or {}).values())
-        if p.name not in usadas:
-            log("   OJO: ninguna serie de config.json apunta a esta portada todavia.")
+        if nombre in usadas:
+            serie = [k for k, v in (CFG.get("portadas") or {}).items() if v == nombre]
+            log(f"config.json ya la usa para: {', '.join(serie)}")
+        else:
+            log(f"OJO: ninguna serie de config.json apunta a \"{nombre}\" todavia; agregala en \"portadas\".")
     return ok
 
 
@@ -747,7 +766,7 @@ def main():
         if len(sys.argv) < 3:
             log("Uso: python podcast_bot.py portada <ruta de la imagen>")
         else:
-            subir_portada(sys.argv[2])
+            subir_portada(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     else:  # robot
         # SEGURO: con "manual": true en el config.json, este show NUNCA
         # baja solo de YouTube. Solo entra lo que se suba a mano
