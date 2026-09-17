@@ -12,6 +12,8 @@ COMANDOS:
   python podcast_bot.py apartar    -> mueve videos disfrazados a videos_apartados/
   python podcast_bot.py subir      -> sube episodios/ a Archive.org (reanudable)
   python podcast_bot.py feed       -> genera feed.xml y lo sube a GitHub
+  python podcast_bot.py portada X  -> sube la imagen X (jpg/png) a la raiz del
+                                      repo, para usarla en config.json "portadas"
   python podcast_bot.py            -> MODO ROBOT (diario): baja nuevos de YouTube
                                       -> Archive -> feed -> GitHub
 """
@@ -357,13 +359,14 @@ def feed_seguro(nuevos=None):
     return agregar_items_al_feed(nuevos)
 
 
-def subir_feed_a_github():
+def _subir_archivo_a_github(ruta_local, nombre_en_repo, mensaje):
+    """Sube (o reemplaza) un archivo en la raiz del repo de GitHub Pages."""
     token_path = Path(TOKEN_FILE)
     if not token_path.exists():
         log(f"ERROR: no encuentro {TOKEN_FILE}.")
         return False
     token = token_path.read_text(encoding="utf-8").strip()
-    api = f"https://api.github.com/repos/{CFG['github_user']}/{CFG['github_repo']}/contents/feed.xml"
+    api = f"https://api.github.com/repos/{CFG['github_user']}/{CFG['github_repo']}/contents/{quote(nombre_en_repo)}"
     headers = {"Authorization": f"token {token}", "User-Agent": "robot-podcast",
                "Accept": "application/vnd.github+json"}
     sha = None
@@ -373,8 +376,8 @@ def subir_feed_a_github():
             sha = json.loads(r.read().decode())["sha"]
     except Exception:
         pass
-    cuerpo = {"message": f"Robot: feed {datetime.now():%d/%m/%Y %H:%M}",
-              "content": base64.b64encode(Path(FEED).read_bytes()).decode()}
+    cuerpo = {"message": mensaje,
+              "content": base64.b64encode(Path(ruta_local).read_bytes()).decode()}
     if sha:
         cuerpo["sha"] = sha
     req = urllib.request.Request(api, data=json.dumps(cuerpo).encode(),
@@ -382,11 +385,39 @@ def subir_feed_a_github():
     try:
         with urllib.request.urlopen(req) as r:
             if r.status in (200, 201):
-                log("feed.xml subido a GitHub: OK")
+                log(f"{nombre_en_repo} subido a GitHub: OK")
                 return True
     except Exception as e:
         log(f"ERROR subiendo a GitHub: {e}")
     return False
+
+
+def subir_feed_a_github():
+    return _subir_archivo_a_github(FEED, "feed.xml",
+                                   f"Robot: feed {datetime.now():%d/%m/%Y %H:%M}")
+
+
+def subir_portada(ruta):
+    """python podcast_bot.py portada C:\\OTZAR\\efshar\\portadas\\portada_mishlei.jpeg
+    Sube la imagen a la raiz del repo (junto a portada.jpg) con su mismo nombre.
+    Luego, en config.json -> "portadas", apunta la serie a ese nombre."""
+    p = Path(ruta)
+    if not p.is_file():
+        log(f"ERROR: no encuentro la imagen {p}")
+        return False
+    if p.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+        log("ERROR: la portada tiene que ser .jpg, .jpeg o .png")
+        return False
+    if p.stat().st_size > 2_000_000:
+        log("AVISO: pesa mas de 2 MB; Spotify la acepta pero conviene achicarla.")
+    ok = _subir_archivo_a_github(p, p.name, f"portada {p.stem}")
+    if ok:
+        log(f"Queda en: {URL_FEED_BASE}/{p.name}")
+        log(f"En config.json -> \"portadas\" pon la serie apuntando a \"{p.name}\" (si no esta ya).")
+        usadas = set((CFG.get("portadas") or {}).values())
+        if p.name not in usadas:
+            log("   OJO: ninguna serie de config.json apunta a esta portada todavia.")
+    return ok
 
 
 
@@ -712,6 +743,11 @@ def main():
     elif cmd == "feed":
         if feed_seguro():
             subir_feed_a_github()
+    elif cmd == "portada":
+        if len(sys.argv) < 3:
+            log("Uso: python podcast_bot.py portada <ruta de la imagen>")
+        else:
+            subir_portada(sys.argv[2])
     else:  # robot
         # SEGURO: con "manual": true en el config.json, este show NUNCA
         # baja solo de YouTube. Solo entra lo que se suba a mano
