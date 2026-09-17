@@ -1,0 +1,7 @@
+{
+  "carpeta_origen": "C:\\OTZAR\\efshar\\mishlei_listo",
+  "carpetas_extra": [],
+  "por_dia": 200,
+  "preferir": [".mp3"],
+  "_nota": "MISHLEI: por_dia 200 = sube todo el curso de un jalon. Correr: python goteo.py --ver (solo muestra) y luego python goteo.py"
+}
