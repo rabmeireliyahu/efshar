@@ -51,9 +51,24 @@ def escribir(nombre, datos):
 
 
 def main():
+    print(f"Carpeta: {AQUI}")
     if not (AQUI / "robot_whatsapp.js").exists():
-        print(f"*** Este script va JUNTO a robot_whatsapp.js. Aqui ({AQUI}) no lo veo.")
+        print(f"*** Este script va JUNTO a robot_whatsapp.js. Aqui no lo veo.")
         sys.exit(1)
+    # la carpeta del robot que esta CORRIENDO tiene estos archivos; una copia no
+    faltan = [n for n in ("robot_whatsapp.log", "estado_anuncios.json", "grupos_registrados.json")
+              if not (AQUI / n).exists()]
+    if faltan or not (AQUI / "sesion_baileys").is_dir():
+        print("*** Esta NO parece ser la carpeta del robot que esta corriendo.")
+        print("    Faltan: " + ", ".join(faltan + ([] if (AQUI / "sesion_baileys").is_dir() else ["sesion_baileys\\"])))
+        print("    Busca la carpeta que tiene robot_whatsapp.log y la subcarpeta sesion_baileys,")
+        print("    pon ahi estos archivos y vuelve a correr el boton. No toque nada.")
+        sys.exit(1)
+    for n in ("estado_anuncios.json", "grupos_registrados.json", "ultimo_anuncio.json", "config_whatsapp.json"):
+        try:
+            print(f"  {n}: claves = " + ", ".join(sorted(leer(n, {}).get("anunciar", leer(n, {})).keys())))
+        except Exception as e:
+            print(f"  {n}: no lo pude leer ({e})")
 
     # 1) config_whatsapp.json
     cfg = leer("config_whatsapp.json", None)
@@ -82,6 +97,11 @@ def main():
 
     # 2) estado_anuncios.json
     estado = leer("estado_anuncios.json", {})
+    if SHOW not in estado:
+        print(f"*** estado_anuncios.json no tiene la clave \"{SHOW}\": esta no es la memoria del robot vivo. No toco nada.")
+        sys.exit(1)
+    ya = [g for g in (f"{TITULO}_{n}.mp3" for n in range(PRIMERO, ULTIMO + 1)) if g in estado[SHOW]]
+    print(f"  {SHOW}: ya tenia {len(ya)} clases de {TITULO} anotadas" + (f" (ultima: {ya[-1]})" if ya else ""))
     guids = [f"{TITULO}_{n}.mp3" for n in range(PRIMERO, ULTIMO + 1)]
     vistos = estado.setdefault(SHOW, [])
     nuevos = [g for g in guids if g not in vistos]
