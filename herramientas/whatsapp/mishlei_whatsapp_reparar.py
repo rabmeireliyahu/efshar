@@ -13,6 +13,7 @@
 #   2. estado_anuncios.json: marca TODO el feed actual de Efshar como ya
 #      visto en "efshar" -> no vuelve a mandar nada viejo; solo lo nuevo.
 #   3. No toca "mishlei" (sigue: empieza el 21, uno al dia, en orden).
+#   3b. "credi": quita el link de audio; el mensaje queda titulo + Spotify + grupo.
 #   4. Escribe mishlei_diagnostico.txt con el antes/despues para mandarselo a Claude.
 # ============================================================
 import io, json, re, shutil, sys, urllib.request
@@ -80,6 +81,13 @@ def main():
     d(f"{SHOW} QUEDA: " + json.dumps(nuevo, ensure_ascii=False))
     if CURSO in an:
         d(f"{CURSO} (sin cambios): " + json.dumps(an[CURSO], ensure_ascii=False))
+    # ---- 1b. credi: sin link de audio; solo titulo + Spotify + grupo ----
+    cr = an.get("credi")
+    if cr is not None:
+        d("credi AHORA: " + json.dumps(cr, ensure_ascii=False))
+        cr.pop("link_audio", None)      # quita el "Audio: archive.org/..." del mensaje
+        cr["sin_audio"] = True          # sin mp3 adjunto
+        d("credi QUEDA: " + json.dumps(cr, ensure_ascii=False))
     escribir("config_whatsapp.json", cfg)
 
     # ---- 2. estado: todo el feed actual como visto en efshar ----
