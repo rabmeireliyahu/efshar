@@ -32,6 +32,7 @@ CURSO = "mishlei"        # entrada nueva: el curso, uno al dia
 TITULO = "Mishlei"       # lo que dice el titulo de cada clase
 PRIMERO, ULTIMO = 1, 154
 YA_SALIERON = [f"{TITULO}_{ULTIMO}.mp3"]   # el 154 se mando hoy por error
+DESDE = "2026-09-21"     # primer dia en que sale Mishlei 1; antes, ANUNCIAR no manda nada de Mishlei
 FEED = "https://rabmeireliyahu.github.io/efshar/feed.xml"
 
 
@@ -85,6 +86,7 @@ def main():
     # memoriza nada de esta entrada; si lo hiciera, se saltaria clases.
     curso.update({
         "curso": True,
+        "desde": DESDE,
         "feed": FEED,
         "filtro_titulo": TITULO,
         "en_orden": True,
@@ -97,6 +99,7 @@ def main():
     escribir("config_whatsapp.json", cfg)
     print(f"  {SHOW}: excluir_titulo = {TITULO}")
     print(f"  {CURSO}: grupo/spotify de {SHOW} + filtro_titulo, en_orden, uno_por_dia, max_anuncios 1, sin_filtro_fecha")
+    print(f"  {CURSO}: empieza el {DESDE}; antes de esa fecha ANUNCIAR no manda nada de {TITULO}")
 
     # 2) estado_anuncios.json
     estado = leer("estado_anuncios.json", {})
@@ -131,11 +134,11 @@ def main():
     ult = leer("ultimo_anuncio.json", {})
     ult[CURSO] = datetime.now().strftime("%Y-%m-%d")
     escribir("ultimo_anuncio.json", ult)
-    print(f"  {CURSO}: marcado como 'ya mando hoy' -> {TITULO} {PRIMERO} sale MANANA con el primer ANUNCIAR")
+    print(f"  {CURSO}: {TITULO} {PRIMERO} sale con el primer ANUNCIAR del {DESDE} en adelante")
 
     print()
     print("LISTO. Ahora: cierra la ventana del ROBOT y vuelve a abrirla.")
-    print("Manana le das a ANUNCIAR como siempre y sale Mishlei 1; pasado, Mishlei 2; etc.")
+    print(f"A partir del {DESDE} le das a ANUNCIAR como siempre y sale Mishlei 1; al dia siguiente, Mishlei 2; etc.")
     print("Los demas shiurim nuevos de Efshar siguen saliendo como siempre, aparte.")
 
 

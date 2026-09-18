@@ -1538,6 +1538,13 @@ async function anunciarInterno(esVigilante) {
 
   for (const [show, datos] of Object.entries(CFG.anunciar || {})) {
     if ((CFG.anunciar[show] || {}).pausado) { log(`${show}: EN PAUSA, no se anuncia (pausado en el config).`); continue; }
+    // "desde": "2026-09-21" -> este show no anuncia nada antes de esa fecha
+    // (sirve para arrancar un curso un dia fijo aunque ya este subido).
+    const desde = String((CFG.anunciar[show] || {}).desde || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(desde) && hoyTexto() < desde) {
+      log(`${show}: empieza el ${desde}, hoy todavia no se anuncia.`);
+      continue;
+    }
     if ((CFG.anunciar[show] || {}).uno_por_dia && yaMandoHoy(show)) {
       log(`${show}: ya se mando hoy, toca manana (uno_por_dia).`);
       continue;
