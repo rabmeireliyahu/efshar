@@ -162,6 +162,61 @@ P_APPLE = [
 TODOS_LOS_PARCHES = P_EXCL + P_SEMANA + P_APPLE
 
 
+def _args_toplevel(s):
+    """'a, b(c, d), e' -> ['a', 'b(c, d)', 'e'] (respeta parentesis, llaves y comillas)."""
+    out, cur, depth, q, i = [], [], 0, None, 0
+    while i < len(s):
+        ch = s[i]
+        if q:
+            cur.append(ch)
+            if ch == "\\" and i + 1 < len(s):
+                cur.append(s[i + 1])
+                i += 1
+            elif ch == q:
+                q = None
+        elif ch in "'\"`":
+            q = ch
+            cur.append(ch)
+        elif ch in "([{":
+            depth += 1
+            cur.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            cur.append(ch)
+        elif ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    if "".join(cur).strip():
+        out.append("".join(cur).strip())
+    return out
+
+
+RX_USO = re.compile(r"^([ \t]*)((?:const|let) texto = armarMensaje\()(.*)(\);[ \t]*)\r?$", re.M)
+
+
+def _apple_uso_flexible(js, nl):
+    """Plan B cuando la linea del mensaje no es identica a la mia: la busca por forma.
+    Devuelve (js_nuevo, descripcion) o (None, motivo)."""
+    cands = [m for m in RX_USO.finditer(js) if "epLink" in m.group(3)]
+    if len(cands) != 1:
+        return None, f"encontre {len(cands)} lineas candidatas (necesito exactamente 1)"
+    m = cands[0]
+    args = _args_toplevel(m.group(3))
+    if not (3 <= len(args) <= 5) or args[1] != "epLink" or "ep." not in args[0]:
+        return None, "la linea no tiene la forma esperada: " + m.group(0).strip()[:160]
+    # tiene que estar DENTRO del ciclo "for (const [show, datos] of ...)" (ahi viven datos, show, pendientes)
+    ini = js.rfind("for (const [show, datos] of", 0, m.start())
+    if ini < 0 or "\nfunction " in js[ini:m.start()] or "\nasync function " in js[ini:m.start()]:
+        return None, "esa linea no esta dentro del ciclo de shows; no me arriesgo"
+    args += ["''"] * (5 - len(args))
+    nueva_linea = f"{m.group(1)}{m.group(2)}{', '.join(args)}, appleLink{m.group(4)}"
+    bloque = APPLE_BLOQUE.replace("\n", nl)
+    return js[:m.start()] + bloque + nueva_linea + js[m.end():], "linea encontrada por forma: " + m.group(0).strip()[:140]
+
+
 def parchar_texto(js):
     """Devuelve (js_nuevo, aplicados, ya_estaban, faltan_anclas)."""
     nl = "\r\n" if "\r\n" in js else "\n"
@@ -173,11 +228,29 @@ def parchar_texto(js):
         v = viejo.replace("\n", nl)
         n = nuevo.replace("\n", nl)
         if js.count(v) != 1:
+            if marca == "SB:apple>>" and js.count(v) == 0:       # plan B por forma
+                nuevo_js, desc = _apple_uso_flexible(js, nl)
+                if nuevo_js is not None:
+                    js = nuevo_js
+                    aplicados.append(nombre + "  [" + desc + "]")
+                    continue
+                faltan.append(nombre + f" (no aparece; plan B: {desc})")
+                continue
             faltan.append(nombre + (" (no aparece)" if js.count(v) == 0 else " (aparece mas de una vez)"))
             continue
         js = js.replace(v, n, 1)
         aplicados.append(nombre)
     return js, aplicados, ya, faltan
+
+
+def diagnostico(js):
+    """Las lineas de TU robot que importan, para que Claude vea que cambio."""
+    L = js.replace("\r\n", "\n").split("\n")
+    out = []
+    for i, l in enumerate(L, 1):
+        if "armarMensaje(" in l or ("uno_por_dia" in l and "yaMandoHoy" in l):
+            out.append(f"    linea {i}: {l.strip()[:200]}")
+    return out[:12]
 
 
 def node_check(ruta):
@@ -198,7 +271,9 @@ def parchar_robot(ruta):
         for f in faltan:
             print(f"  *** NO ENCUENTRO el punto para: {f}")
         print("  *** Este robot_whatsapp.js no es la version esperada. No toque NADA.")
-        print("      Mandale a Claude el archivo robot_whatsapp.js que estas usando.")
+        print("      Copia TODO este texto y mandaselo a Claude (o manda tu robot_whatsapp.js):")
+        for d in diagnostico(js):
+            print(d)
         return False
     if not aplicados:
         print("  (el robot ya tenia todos los parches)")
