@@ -1380,10 +1380,51 @@ function feedDeShow(show) {
   const d = (CFG.anunciar || {})[show] || {};
   return (d.feed && String(d.feed).startsWith('http')) ? d.feed : `https://rabmeireliyahu.github.io/${show}/feed.xml`;
 }
-function armarMensaje(titulo, spotify, whatsapp, show, app) {
+// <<SB:apple-fn  (sep/2026, Shalom Bait)
+// ---- APPLE PODCASTS: link directo al episodio (buscador PUBLICO de Apple) ----
+// "apple": "https://podcasts.apple.com/us/podcast/.../id6824132687" en anunciar -> <show>
+// "apple_nombre": nombre del show en Apple (ayuda a que la busqueda lo encuentre)
+function appleIds(url) {
+  const m = String(url || '').match(/podcasts\.apple\.com\/([a-z]{2})\/podcast\/(?:[^\/?#]+\/)?id(\d+)/i);
+  return m ? { pais: m[1].toLowerCase(), id: m[2] } : null;
+}
+function fetchConTope(url, ms) {
+  return Promise.race([fetchTexto(url), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms || 20000))]);
+}
+async function linkAppleEpisodio(appleUrl, titulo, nombreShow) {
+  const ap = appleIds(appleUrl);
+  if (!ap) return null;
+  const objetivo = soloLetras(titulo);
+  const consultas = [`${titulo} ${nombreShow || ''}`.trim(), `${nombreShow || ''} ${titulo}`.trim(), titulo];
+  for (const q of consultas) {
+    try {
+      const url = 'https://itunes.apple.com/search?' + new URLSearchParams({ term: q, media: 'podcast', entity: 'podcastEpisode', limit: '25', country: ap.pais }).toString();
+      const j = JSON.parse(await fetchConTope(url));
+      let mejor = null, punt = 0;
+      for (const r of (j.results || [])) {
+        if (String(r.collectionId) !== ap.id || !r.trackViewUrl) continue;
+        const n = soloLetras(r.trackName);
+        let p = 0;
+        if (n === objetivo) p = 1;
+        else if (marcadores(r.trackName) === marcadores(titulo)) p = similitud(n, objetivo);
+        if (p > punt) { punt = p; mejor = r; }
+      }
+      if (mejor && punt >= 0.95) {
+        const u = new URL(mejor.trackViewUrl);
+        u.searchParams.delete('uo');
+        return u.toString();
+      }
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return null;
+}
+// SB:apple-fn>>
+function armarMensaje(titulo, spotify, whatsapp, show, app, apple) {
   // "app": link directo al shiur en la app del show (viene del <link> del feed)
   let t = app ? `🎧 *${titulo}*` : `*${titulo}*`;
   if (app)      t += `\n📲 App\n${app}`;
+  if (apple)    t += app ? `\n🍎 Apple Podcasts\n${apple}` : `\nApple Podcasts\n${apple}`;   // SB:apple-msg
   if (spotify)  t += app ? `\n🎵 Spotify\n${spotify}` : `\nSpotify\n${spotify}`;
   if (whatsapp) t += `\nWhatsapp\n${whatsapp}`;
   if (show) t += `\n\n${DIFUNDE[idiomaDeShow(show)]}`;
@@ -1545,6 +1586,23 @@ async function anunciarInterno(esVigilante) {
       log(`${show}: empieza el ${desde}, hoy todavia no se anuncia.`);
       continue;
     }
+    // <<SB:semana  (sep/2026, Shalom Bait)
+    // "dia_semana": 1 (0=domingo, 1=lunes ... 6=sabado) -> este show sale UNA vez por
+    // semana, ese dia. "dias_gracia": 3 -> si ese dia no salio (sin link, feriado,
+    // no se dio el boton), sale en el siguiente ANUNCIAR de los N dias que siguen.
+    // Nunca dos veces en menos de 6 dias (necesita "uno_por_dia": true).
+    const _ds = (CFG.anunciar[show] || {}).dia_semana;
+    if (Number.isInteger(_ds) && _ds >= 0 && _ds <= 6) {
+      const _gr = Math.max(0, Math.min(6, parseInt((CFG.anunciar[show] || {}).dias_gracia, 10) || 0));
+      const _desdeDia = (new Date().getDay() - _ds + 7) % 7;
+      const _ult = leerUltimos()[show];
+      const _dias = _ult ? Math.round((Date.parse(hoyTexto() + 'T00:00:00') - Date.parse(_ult + 'T00:00:00')) / 86400000) : 999;
+      if (_desdeDia > _gr || _dias < 6) {
+        log(`${show}: sale 1 vez por semana (${['domingo','lunes','martes','miercoles','jueves','viernes','sabado'][_ds]}); hoy no toca.`);
+        continue;
+      }
+    }
+    // SB:semana>>
     if ((CFG.anunciar[show] || {}).uno_por_dia && yaMandoHoy(show)) {
       log(`${show}: ya se mando hoy, toca manana (uno_por_dia).`);
       continue;
@@ -1621,6 +1679,7 @@ async function anunciarInterno(esVigilante) {
     // curso que se suelta de a uno al dia en OTRA entrada del config (misma
     // feed, "filtro_titulo") no salga tambien por la entrada normal del show.
     const excluirTit = (CFG.anunciar && CFG.anunciar[show] || {}).excluir_titulo;
+    const _excl = [].concat(excluirTit || []).filter(Boolean);   // SB:excl (lista o texto)
     const limite = Date.now() - DIAS_FRESCO * 86400000;
     // === candado sin titulo (otzar) ===
     const _RX_SIN_TITULO = /^Shiur\s+(OtzarHaTorah[_ ]Subidas|[A-Za-z .]+)\s+\d{1,2}-\d{1,2}-\d{4}/i;
@@ -1635,7 +1694,7 @@ async function anunciarInterno(esVigilante) {
     let fuera = 0;
     for (const ep of nuevos) {
       if ((filtroTit && !(ep.tit || '').includes(filtroTit)) ||
-          (excluirTit && (ep.tit || '').includes(excluirTit))) {
+          (_excl.some(x => (ep.tit || '').includes(x)))) {
         marcarAnunciado(show, ep.guid);
         estado[show].push(ep.guid);
         fuera++;
@@ -1647,7 +1706,7 @@ async function anunciarInterno(esVigilante) {
         silenciados++;
       } else frescos.push(ep);
     }
-    if (fuera) log(`${show}: ${fuera} episodio(s) fuera del filtro "${filtroTit || ('sin ' + excluirTit)}", no se anuncian.`);
+    if (fuera) log(`${show}: ${fuera} episodio(s) fuera del filtro "${filtroTit || ('sin ' + _excl.join(' / '))}", no se anuncian.`);
     if (silenciados) log(`${show}: ${silenciados} episodio(s) viejo(s) marcados sin anunciar.`);
     if (sinFiltro) log(`${show}: modo catalogo, ${frescos.length} pendiente(s) por soltar.`);
     if (!frescos.length) { log(`${show}: nada nuevo reciente.`); continue; }
@@ -1760,7 +1819,26 @@ async function anunciarInterno(esVigilante) {
         log(`   (lo mas parecido que tiene Spotify: ${diag.masParecidos.join('  |  ')})`);
         continue; // NO se marca: el proximo ANUNCIAR lo reintenta
       }
-      const texto = armarMensaje(ep.tit, epLink, wa, show, datos.app ? (ep.link || datos.app) : '');
+      // <<SB:apple  (sep/2026): link de Apple Podcasts del episodio
+      let appleLink = '';
+      if (datos.apple) {
+        appleLink = await linkAppleEpisodio(datos.apple, ep.tit, datos.apple_nombre || '') || '';
+        if (!appleLink) {
+          const _dsA = datos.dia_semana;
+          const _grA = Math.max(0, Math.min(6, parseInt(datos.dias_gracia, 10) || 0));
+          const _ultimoDia = Number.isInteger(_dsA) && ((new Date().getDay() - _dsA + 7) % 7) >= _grA;
+          if (_ultimoDia) {
+            appleLink = String(datos.apple).split('?')[0];
+            log(`${show}: Apple aun no tiene "${ep.tit.slice(0,40)}"; es el ultimo dia de gracia: va el link del show de Apple.`);
+          } else {
+            pendientes++;
+            log(`${show}: "${ep.tit.slice(0,45)}" sin link de Apple todavia; el vigilante lo reintenta solo.`);
+            continue; // NO se marca: el proximo ANUNCIAR lo reintenta
+          }
+        }
+      }
+      // SB:apple>>
+      const texto = armarMensaje(ep.tit, epLink, wa, show, datos.app ? (ep.link || datos.app) : '', appleLink);
       // ultima revision antes de mandar: si otra corrida ya lo anuncio, lo salto
       if (yaAnunciado(show, ep.guid)) { log(`${show}: "${ep.tit.slice(0,40)}" ya se anuncio; lo salto.`); continue; }
       const grupos = gruposDeShow(reg, show);
