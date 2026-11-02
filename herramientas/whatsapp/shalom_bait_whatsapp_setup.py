@@ -1,27 +1,28 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-#  shalom_bait_whatsapp_setup.py - deja el robot de WhatsApp listo para
-#  soltar SHALOM BAIT UNA VEZ POR SEMANA (lunes), con link de Apple Podcasts,
-#  link de Spotify, titulo con el nombre del Rab y el audio.
+#  shalom_bait_whatsapp_setup.py - deja SHALOM BAIT funcionando DESDE ANUNCIAR.bat:
+#  1 clase por semana, con titulo + Rab, Apple, Spotify y el audio.
 #
-#  Va en la MISMA carpeta que robot_whatsapp.js (C:\robotwhats).
-#  Se corre UNA vez (boton SHALOM_BAIT_WHATSAPP_SETUP.bat). Despues, cerrar
-#  y volver a abrir la ventana del ROBOT.
+#  Va en la MISMA carpeta que robot_whatsapp.js y ANUNCIAR.bat (C:\robotwhats).
+#  Se corre UNA vez (SHALOM_BAIT_WHATSAPP_SETUP.bat). Despues, cerrar y abrir
+#  la ventana del ROBOT. Desde ahi todo sale con ANUNCIAR, sin botones extra.
 #
 #  Que hace (guarda copia .bak de cada archivo antes de tocarlo):
-#   1. robot_whatsapp.js (parche en su lugar, con anclas; si algo no cuadra no
-#      toca nada):
-#        - "excluir_titulo" ahora acepta una LISTA (["Mishlei", "Shalom Bait"])
+#   1. robot_whatsapp.js (parche en su lugar, por anclas; si algo no cuadra NO toca nada):
+#        - "excluir_titulo" acepta LISTA (["Mishlei", "Shalom Bait"])
 #        - "dia_semana" + "dias_gracia": el show sale 1 vez por semana
-#        - "apple": busca el link DIRECTO del episodio en Apple Podcasts
-#          (buscador publico de Apple) y lo pone en el mensaje
+#        - Apple: el "lookup" de Apple solo trae los 200 episodios MAS VIEJOS, asi que un
+#          episodio nuevo salia con el link GENERAL del show. Ahora, si no esta en esa
+#          lista, se busca por titulo con el buscador PUBLICO de Apple (link del episodio).
+#        - "apple_esperar": no se anuncia con el link general; se espera a que Apple tenga
+#          el episodio (el ultimo dia de gracia sale con el del show para no quedarse sin avisar)
 #   2. config_whatsapp.json:
 #        - "efshar": excluye "Shalom Bait" (para que NO salga por la entrada normal)
-#        - "shalombait": entrada nueva, mismos grupos y Spotify que el ultimo curso,
-#          filtro_titulo "Shalom Bait", en_orden, 1 por semana (lunes, 3 dias de gracia)
-#   3. estado_anuncios.json: "shalombait" empieza vacio (asi el robot NO
-#      memoriza en silencio el primer episodio que aparezca)
-#   4. grupos_registrados.json: shalombait anuncia en los mismos grupos
+#        - "shalombait": entrada nueva, mismos grupos y Spotify que el ultimo curso, con
+#          filtro_titulo, en_orden, 1 por semana (lunes, 3 dias de gracia), Apple, no_shabat
+#   3. estado_anuncios.json / grupos_registrados.json: lo que necesita la entrada nueva
+#   4. ANUNCIAR.bat: antes de mandar la orden al robot, sube la clase de la semana al feed
+#      si toca (domingo a miercoles, 1 vez por semana). Si ya se subio, no hace nada.
 # ============================================================
 import io, json, re, shutil, subprocess, sys
 from datetime import datetime
@@ -41,6 +42,7 @@ APPLE_NOMBRE = "Efshar Letaken"      # nombre del show en Apple (ayuda a la busq
 DIA_SEMANA = 1                       # 0=domingo, 1=lunes ... 6=sabado
 DIAS_GRACIA = 3                      # si el lunes no salio, sale hasta el jueves
 COPIAR_GRUPOS_DE = ("mishlei", "efshar")   # de que entrada copiar grupos y Spotify (la primera que exista)
+EFSHAR_DIR = r"C:\OTZAR\efshar"      # donde esta shalom_bait.py
 # ------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -83,138 +85,71 @@ P_SEMANA = [
 """),
 ]
 
-APPLE_FN = r"""// <<SB:apple-fn  (sep/2026, Shalom Bait)
-// ---- APPLE PODCASTS: link directo al episodio (buscador PUBLICO de Apple) ----
-// "apple": "https://podcasts.apple.com/us/podcast/.../id6824132687" en anunciar -> <show>
-// "apple_nombre": nombre del show en Apple (ayuda a que la busqueda lo encuentre)
-function appleIds(url) {
-  const m = String(url || '').match(/podcasts\.apple\.com\/([a-z]{2})\/podcast\/(?:[^\/?#]+\/)?id(\d+)/i);
-  return m ? { pais: m[1].toLowerCase(), id: m[2] } : null;
-}
-function fetchConTope(url, ms) {
-  return Promise.race([fetchTexto(url), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms || 20000))]);
-}
-async function linkAppleEpisodio(appleUrl, titulo, nombreShow) {
-  const ap = appleIds(appleUrl);
-  if (!ap) return null;
-  const objetivo = soloLetras(titulo);
-  const consultas = [`${titulo} ${nombreShow || ''}`.trim(), `${nombreShow || ''} ${titulo}`.trim(), titulo];
-  for (const q of consultas) {
+APPLE_FN = r"""// <<SB:apple-fn  (nov/2026, Shalom Bait)
+// El "lookup" de Apple solo trae los 200 episodios MAS VIEJOS: un episodio nuevo nunca esta ahi y el
+// anuncio salia con el link GENERAL del show. Aqui se busca por titulo con el buscador PUBLICO de
+// Apple (solo cuenta si es del show y el titulo coincide). "apple_nombre" en anunciar.<show> ayuda.
+const _appleBuscaCache = {};
+async function appleBuscarEpisodio(show, titulo) {
+  const pl = _plataformasDe(show);
+  if (!pl.apple_id) return '';
+  const k = pl.apple_id + '|' + normTitulo(titulo);
+  const c = _appleBuscaCache[k];
+  if (c && Date.now() - c.t < 3 * 60000) return c.v;
+  const pais = (String(pl.apple).match(/podcasts\.apple\.com\/([a-z]{2})\//i) || [])[1] || 'us';
+  const nombre = String(((CFG.anunciar || {})[show] || {}).apple_nombre || '');
+  const objetivo = normTitulo(titulo);
+  let v = '';
+  for (const q of [...new Set([`${titulo} ${nombre}`.trim(), `${nombre} ${titulo}`.trim(), titulo])]) {
     try {
-      const url = 'https://itunes.apple.com/search?' + new URLSearchParams({ term: q, media: 'podcast', entity: 'podcastEpisode', limit: '25', country: ap.pais }).toString();
-      const j = JSON.parse(await fetchConTope(url));
-      let mejor = null, punt = 0;
-      for (const r of (j.results || [])) {
-        if (String(r.collectionId) !== ap.id || !r.trackViewUrl) continue;
-        const n = soloLetras(r.trackName);
-        let p = 0;
-        if (n === objetivo) p = 1;
-        else if (marcadores(r.trackName) === marcadores(titulo)) p = similitud(n, objetivo);
-        if (p > punt) { punt = p; mejor = r; }
-      }
-      if (mejor && punt >= 0.95) {
-        const u = new URL(mejor.trackViewUrl);
-        u.searchParams.delete('uo');
-        return u.toString();
-      }
+      const url = 'https://itunes.apple.com/search?' + new URLSearchParams({ term: q, media: 'podcast', entity: 'podcastEpisode', limit: '25', country: pais }).toString();
+      const j = JSON.parse(await Promise.race([fetchTexto(url), new Promise((_, no) => setTimeout(() => no(new Error('tardo')), 20000))]));
+      const r = (j.results || []).find(x => String(x.collectionId) === pl.apple_id && x.trackId && normTitulo(x.trackName) === objetivo);
+      if (r) { v = `https://podcasts.apple.com/podcast/id${r.collectionId}?i=${r.trackId}`; break; }
     } catch (e) {}
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(res => setTimeout(res, 400));
   }
-  return null;
+  _appleBuscaCache[k] = { t: Date.now(), v };
+  return v;
 }
 // SB:apple-fn>>
 """
 
-APPLE_BLOQUE = r"""      // <<SB:apple  (sep/2026): link de Apple Podcasts del episodio
-      let appleLink = '';
-      if (datos.apple) {
-        appleLink = await linkAppleEpisodio(datos.apple, ep.tit, datos.apple_nombre || '') || '';
-        if (!appleLink) {
+APPLE_ESPERA = r"""      // <<SB:apple-espera  (nov/2026, Shalom Bait)
+      // "apple_esperar": true en anunciar.<show>: no se anuncia con el link GENERAL del show de Apple;
+      // se espera (el vigilante reintenta) a que Apple tenga el episodio. El ULTIMO dia de gracia
+      // (dia_semana + dias_gracia) sale con el link del show para no quedarse sin anunciar.
+      if (datos.apple_esperar) {
+        const _exApple = await appleBuscarEpisodio(show, ep.tit);
+        if (!_exApple) {
           const _dsA = datos.dia_semana;
           const _grA = Math.max(0, Math.min(6, parseInt(datos.dias_gracia, 10) || 0));
           const _ultimoDia = Number.isInteger(_dsA) && ((new Date().getDay() - _dsA + 7) % 7) >= _grA;
           if (_ultimoDia) {
-            appleLink = String(datos.apple).split('?')[0];
-            log(`${show}: Apple aun no tiene "${ep.tit.slice(0,40)}"; es el ultimo dia de gracia: va el link del show de Apple.`);
+            log(`${show}: Apple aun no tiene "${ep.tit.slice(0, 40)}"; es el ultimo dia de gracia: sale con el link del show de Apple.`);
           } else {
             pendientes++;
-            log(`${show}: "${ep.tit.slice(0,45)}" sin link de Apple todavia; el vigilante lo reintenta solo.`);
+            log(`${show}: "${ep.tit.slice(0, 45)}" sin link de Apple todavia; el vigilante lo reintenta solo.`);
             continue; // NO se marca: el proximo ANUNCIAR lo reintenta
           }
         }
       }
-      // SB:apple>>
+      // SB:apple-espera>>
 """
 
 P_APPLE = [
-    ("Apple: funcion de busqueda", "SB:apple-fn",
-     "function armarMensaje(titulo, spotify, whatsapp, show, app) {\n",
-     APPLE_FN + "function armarMensaje(titulo, spotify, whatsapp, show, app, apple) {\n"),
-    ("Apple: linea en el mensaje", "SB:apple-msg",
-     r"  if (spotify)  t += app ? `\n🎵 Spotify\n${spotify}` : `\nSpotify\n${spotify}`;" + "\n",
-     r"  if (apple)    t += app ? `\n🍎 Apple Podcasts\n${apple}` : `\nApple Podcasts\n${apple}`;   // SB:apple-msg" + "\n"
-     r"  if (spotify)  t += app ? `\n🎵 Spotify\n${spotify}` : `\nSpotify\n${spotify}`;" + "\n"),
-    ("Apple: uso en el anuncio", "SB:apple>>",
-     "      const texto = armarMensaje(ep.tit, epLink, wa, show, datos.app ? (ep.link || datos.app) : '');\n",
-     APPLE_BLOQUE +
-     "      const texto = armarMensaje(ep.tit, epLink, wa, show, datos.app ? (ep.link || datos.app) : '', appleLink);\n"),
+    ("Apple: busqueda de episodios nuevos (funcion)", "SB:apple-fn",
+     "async function linkApple(show, titulo) {\n",
+     APPLE_FN + "async function linkApple(show, titulo) {\n"),
+    ("Apple: usarla cuando el episodio no esta en el lookup", "SB:apple-busca",
+     "    // (oct/2026) link corto: sin el nombre del episodio adentro (Apple lo abre igual)\n",
+     "    if (!ep) { const _b = await appleBuscarEpisodio(show, titulo); if (_b) return _b; }   // SB:apple-busca\n"
+     "    // (oct/2026) link corto: sin el nombre del episodio adentro (Apple lo abre igual)\n"),
+    ("Apple: esperar al episodio (apple_esperar)", "SB:apple-espera",
+     "\n      const _plat = await bloquePlataformas(show, ep.tit);\n",
+     "\n      const _plat = await bloquePlataformas(show, ep.tit);\n" + APPLE_ESPERA),
 ]
 TODOS_LOS_PARCHES = P_EXCL + P_SEMANA + P_APPLE
-
-
-def _args_toplevel(s):
-    """'a, b(c, d), e' -> ['a', 'b(c, d)', 'e'] (respeta parentesis, llaves y comillas)."""
-    out, cur, depth, q, i = [], [], 0, None, 0
-    while i < len(s):
-        ch = s[i]
-        if q:
-            cur.append(ch)
-            if ch == "\\" and i + 1 < len(s):
-                cur.append(s[i + 1])
-                i += 1
-            elif ch == q:
-                q = None
-        elif ch in "'\"`":
-            q = ch
-            cur.append(ch)
-        elif ch in "([{":
-            depth += 1
-            cur.append(ch)
-        elif ch in ")]}":
-            depth -= 1
-            cur.append(ch)
-        elif ch == "," and depth == 0:
-            out.append("".join(cur).strip())
-            cur = []
-        else:
-            cur.append(ch)
-        i += 1
-    if "".join(cur).strip():
-        out.append("".join(cur).strip())
-    return out
-
-
-RX_USO = re.compile(r"^([ \t]*)((?:const|let) texto = armarMensaje\()(.*)(\);[ \t]*)\r?$", re.M)
-
-
-def _apple_uso_flexible(js, nl):
-    """Plan B cuando la linea del mensaje no es identica a la mia: la busca por forma.
-    Devuelve (js_nuevo, descripcion) o (None, motivo)."""
-    cands = [m for m in RX_USO.finditer(js) if "epLink" in m.group(3)]
-    if len(cands) != 1:
-        return None, f"encontre {len(cands)} lineas candidatas (necesito exactamente 1)"
-    m = cands[0]
-    args = _args_toplevel(m.group(3))
-    if not (3 <= len(args) <= 5) or args[1] != "epLink" or "ep." not in args[0]:
-        return None, "la linea no tiene la forma esperada: " + m.group(0).strip()[:160]
-    # tiene que estar DENTRO del ciclo "for (const [show, datos] of ...)" (ahi viven datos, show, pendientes)
-    ini = js.rfind("for (const [show, datos] of", 0, m.start())
-    if ini < 0 or "\nfunction " in js[ini:m.start()] or "\nasync function " in js[ini:m.start()]:
-        return None, "esa linea no esta dentro del ciclo de shows; no me arriesgo"
-    args += ["''"] * (5 - len(args))
-    nueva_linea = f"{m.group(1)}{m.group(2)}{', '.join(args)}, appleLink{m.group(4)}"
-    bloque = APPLE_BLOQUE.replace("\n", nl)
-    return js[:m.start()] + bloque + nueva_linea + js[m.end():], "linea encontrada por forma: " + m.group(0).strip()[:140]
 
 
 def parchar_texto(js):
@@ -227,16 +162,9 @@ def parchar_texto(js):
             continue
         v = viejo.replace("\n", nl)
         n = nuevo.replace("\n", nl)
-        if js.count(v) != 1:
-            if marca == "SB:apple>>" and js.count(v) == 0:       # plan B por forma
-                nuevo_js, desc = _apple_uso_flexible(js, nl)
-                if nuevo_js is not None:
-                    js = nuevo_js
-                    aplicados.append(nombre + "  [" + desc + "]")
-                    continue
-                faltan.append(nombre + f" (no aparece; plan B: {desc})")
-                continue
-            faltan.append(nombre + (" (no aparece)" if js.count(v) == 0 else " (aparece mas de una vez)"))
+        veces = js.count(v)
+        if veces != 1:
+            faltan.append(nombre + (" (no aparece)" if veces == 0 else " (aparece mas de una vez)"))
             continue
         js = js.replace(v, n, 1)
         aplicados.append(nombre)
@@ -246,11 +174,8 @@ def parchar_texto(js):
 def diagnostico(js):
     """Las lineas de TU robot que importan, para que Claude vea que cambio."""
     L = js.replace("\r\n", "\n").split("\n")
-    out = []
-    for i, l in enumerate(L, 1):
-        if "armarMensaje(" in l or ("uno_por_dia" in l and "yaMandoHoy" in l):
-            out.append(f"    linea {i}: {l.strip()[:200]}")
-    return out[:12]
+    claves = ("linkApple", "bloquePlataformas(", "uno_por_dia && yaMandoHoy", "excluirTit =")
+    return [f"    linea {i}: {l.strip()[:200]}" for i, l in enumerate(L, 1) if any(c in l for c in claves)][:14]
 
 
 def node_check(ruta):
@@ -294,6 +219,48 @@ def parchar_robot(ruta):
 
 
 # ---------------------------------------------------------------------------
+#  ANUNCIAR.bat: subir la clase de la semana antes de mandar la orden al robot
+# ---------------------------------------------------------------------------
+HOOK_MARCA = "shalom_bait.py"
+HOOK_ANCLA = "echo anunciar> comando.txt"
+
+
+def hook_bloque(nl):
+    lineas = [
+        "rem === Shalom Bait (nov/2026): sube la clase de la semana al feed si toca (1 por semana) ===",
+        f'if exist "{EFSHAR_DIR}\\shalom_bait.py" (',
+        f'  python "{EFSHAR_DIR}\\shalom_bait.py" semana auto',
+        "  echo.",
+        ")",
+        "",
+    ]
+    return nl.join(lineas)
+
+
+def parchar_anunciar(ruta):
+    ruta = Path(ruta)
+    if not ruta.exists():
+        print("  *** No encuentro ANUNCIAR.bat en esta carpeta.")
+        return False
+    txt = ruta.read_bytes().decode("utf-8", errors="replace")
+    if HOOK_MARCA in txt:
+        print("  ANUNCIAR.bat: ya tenia la subida semanal")
+        return True
+    nl = "\r\n" if "\r\n" in txt else "\n"
+    n = txt.count(HOOK_ANCLA)
+    if n != 1:
+        print(f"  *** En ANUNCIAR.bat encontre {n} veces la linea \"{HOOK_ANCLA}\" (necesito 1). No lo toque.")
+        print("      Mandale a Claude tu ANUNCIAR.bat.")
+        return False
+    shutil.copy2(ruta, ruta.with_suffix(ruta.suffix + f".bak_shalombait_{datetime.now():%Y%m%d_%H%M}"))
+    ruta.write_bytes(txt.replace(HOOK_ANCLA, hook_bloque(nl) + HOOK_ANCLA, 1).encode("utf-8"))
+    print("  ANUNCIAR.bat: ahora sube la clase de la semana (domingo a miercoles, 1 por semana) antes de anunciar")
+    if not (Path(EFSHAR_DIR) / "shalom_bait.py").exists():
+        print(f"  OJO: no veo {EFSHAR_DIR}\\shalom_bait.py. Copialo ahi (esta en los archivos que te mande).")
+    return True
+
+
+# ---------------------------------------------------------------------------
 #  CONFIGURACION DEL ROBOT
 # ---------------------------------------------------------------------------
 def leer(nombre, defecto):
@@ -332,11 +299,11 @@ def main():
         print(f"*** No encuentro de donde copiar los grupos (busque: {', '.join(COPIAR_GRUPOS_DE)}). No toco nada.")
         sys.exit(1)
 
-    print("\n[1/4] Robot (robot_whatsapp.js)")
+    print("\n[1/5] Robot (robot_whatsapp.js)")
     if not parchar_robot(AQUI / "robot_whatsapp.js"):
         sys.exit(1)
 
-    print("\n[2/4] config_whatsapp.json")
+    print("\n[2/5] config_whatsapp.json")
     padre = an[SHOW_PADRE]
     excl = padre.get("excluir_titulo", [])
     excl = [excl] if isinstance(excl, str) else list(excl)
@@ -352,6 +319,8 @@ def main():
         "feed": FEED,
         "apple": APPLE_URL,
         "apple_nombre": APPLE_NOMBRE,
+        "apple_esperar": True,
+        "no_shabat": True,
         "filtro_titulo": TITULO,
         "en_orden": True,
         "uno_por_dia": True,
@@ -362,15 +331,23 @@ def main():
         "dias_gracia": DIAS_GRACIA,
         "_nota": f"Curso {TITULO}: 1 por semana (lunes, hasta jueves si se atrasa). Para pausarlo: \"pausado\": true",
     }
+    # Amazon / SoundCloud del show (para que el mensaje lleve las mismas plataformas que los demas de Efshar)
+    plat = (leer("plataformas.json", {}) or {}).get(SHOW_PADRE, {}) or {}
+    for k in ("amazon", "soundcloud"):
+        v = padre.get(k) or plat.get(k)
+        if v:
+            curso[k] = v
     previo = an.get(CURSO)
     an[CURSO] = curso
     escribir("config_whatsapp.json", cfg)
     print(f"  {SHOW_PADRE}: excluir_titulo = {excl}")
     print(f"  {CURSO}: {'actualizada' if previo else 'creada'}; grupos y Spotify copiados de \"{origen}\" ({len(invites)} grupo(s))")
     print(f"  {CURSO}: 1 por semana, {['domingo','lunes','martes','miercoles','jueves','viernes','sabado'][DIA_SEMANA]}"
-          f" (+{DIAS_GRACIA} dias de gracia), con Apple + Spotify + audio")
+          f" (+{DIAS_GRACIA} dias de gracia), no en Shabat/Yom Tov, con Apple del episodio + Spotify + audio")
+    if "amazon" in curso or "soundcloud" in curso:
+        print("  " + CURSO + ": tambien lleva " + " y ".join(k.capitalize() for k in ("amazon", "soundcloud") if k in curso) + " (igual que Efshar)")
 
-    print("\n[3/4] estado_anuncios.json")
+    print("\n[3/5] estado_anuncios.json")
     estado = leer("estado_anuncios.json", {})
     if CURSO not in estado:
         estado[CURSO] = []
@@ -379,7 +356,7 @@ def main():
     else:
         print(f"  {CURSO}: ya tenia memoria ({len(estado[CURSO])} episodio(s)); la dejo igual")
 
-    print("\n[4/4] grupos_registrados.json")
+    print("\n[4/5] grupos_registrados.json")
     reg = leer("grupos_registrados.json", {})
     if origen in reg:
         reg[CURSO] = json.loads(json.dumps(reg[origen]))
@@ -389,12 +366,15 @@ def main():
     else:
         print("  (el robot resuelve los grupos solo al arrancar, por los links de invitacion)")
 
+    print("\n[5/5] ANUNCIAR.bat")
+    parchar_anunciar(AQUI / "ANUNCIAR.bat")
+
     if "mishlei" in an and not an["mishlei"].get("pausado"):
         print("\nOJO: la entrada \"mishlei\" sigue ACTIVA en config_whatsapp.json. Si ya no la quieres, dimelo y la pauso.")
 
     print()
     print("LISTO. Ahora: cierra la ventana del ROBOT y vuelve a abrirla.")
-    print("Cada lunes (ANUNCIAR) sale 1 clase de Shalom Bait con Apple + Spotify + audio.")
+    print("Desde ahi, ANUNCIAR hace todo: sube la clase de la semana y la manda con Apple + Spotify + audio.")
     print("Los demas shiurim de Efshar siguen saliendo como siempre, aparte.")
 
 

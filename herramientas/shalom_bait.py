@@ -11,7 +11,8 @@
 #                                         final en shalom_bait_listo\ y deja
 #                                         config.json y goteo.json listos.
 #     python shalom_bait.py semana     -> sube la SIGUIENTE clase al feed (la de
-#                                         esta semana). Los domingos.
+#                                         esta semana). ANUNCIAR.bat lo corre solo
+#                                         ("semana auto"): domingo a miercoles, 1 por semana.
 #
 #  Titulo de cada clase:   Shalom Bait <N> - <tema> - <Rab>
 #  (sin tema:               Shalom Bait <N> - <Rab>)
@@ -19,7 +20,7 @@
 #  shalom_bait_orden.txt manda: ahi se cambia el ORDEN (mover lineas), el TEMA,
 #  el RAB, o se EXCLUYE una clase (ponerle # al inicio de la linea).
 # ============================================================
-import io, json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
+import io, json, os, re, shutil, subprocess, sys, time, urllib.error, urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -446,8 +447,28 @@ def url_existe(url):
         return None
 
 
-def semana(forzar=False):
-    """Sube la clase de ESTA semana: la siguiente sin publicar. Una vez por semana."""
+def subir_portada_local(archivo_repo):
+    """Si la portada esta guardada en la compu (portadas\\portada_shalombait.jpeg), la sube al repo con
+    podcast_bot.py y espera a que Pages la sirva. True si quedo lista."""
+    for c in (AQUI / "portadas" / archivo_repo, AQUI / archivo_repo):
+        if c.is_file():
+            print(f"La portada no estaba en internet; la subo desde {c} ...", flush=True)
+            subprocess.run([sys.executable, "podcast_bot.py", "portada", str(c), archivo_repo], cwd=str(AQUI))
+            for _ in range(9):                       # hasta ~90 s a que Pages la publique
+                if url_existe(f"{URL_PAGES}/{archivo_repo}"):
+                    return True
+                time.sleep(10)
+            return False
+    return False
+
+
+def semana(forzar=False, auto=False):
+    """Sube la clase de ESTA semana: la siguiente sin publicar. Una vez por semana.
+    auto=True (lo usa ANUNCIAR.bat): sin preguntas; solo de domingo a miercoles, para que el robot
+    todavia tenga el lunes-jueves para mandarla."""
+    if auto and not forzar and datetime.now().weekday() not in (6, 0, 1, 2):     # dom, lun, mar, mie
+        print("Shalom Bait: hoy no toca subir la clase de la semana (se sube de domingo a miercoles).")
+        return 0
     gp = AQUI / "goteo.json"
     try:
         g = json.loads(gp.read_text(encoding="utf-8"))
@@ -477,21 +498,26 @@ def semana(forzar=False):
         portadas = {}
     if SERIE in portadas:
         ok = url_existe(f"{URL_PAGES}/{portadas[SERIE]}")
+        if ok is False and subir_portada_local(portadas[SERIE]):
+            ok = True
         if ok is False:
             print(f"*** La portada {portadas[SERIE]} todavia NO esta en {URL_PAGES}. No subo nada.")
-            print(f"    Subela:  python podcast_bot.py portada \"<tu imagen>\" {portadas[SERIE]}")
-            print("    (si la acabas de subir, espera 1-2 minutos y vuelve a intentar)")
+            print(f"    Guarda la imagen como  {AQUI}\\portadas\\{portadas[SERIE]}  y la subo yo sola en el siguiente ANUNCIAR")
+            print(f"    (o:  python podcast_bot.py portada \"<tu imagen>\" {portadas[SERIE]})")
             return 1
         if ok is None:
             print("(no pude comprobar la portada en internet; sigo)")
-    print(f"Pendientes: {len(pend)}.  Esta semana sube: {Path(pend[0]).stem}\n")
+    print(f"Pendientes: {len(pend)}.  Esta semana sube: {Path(pend[0]).stem}\n", flush=True)
     rc = subprocess.run([sys.executable, "goteo.py"], cwd=str(AQUI)).returncode
     despues = publicados()
     nuevos = [n for n in pend if n in despues]
     print()
     if nuevos:
         print(f"SUBIDA: {Path(nuevos[0]).stem}")
-        print(f"Quedan {len(pend) - len(nuevos)} clase(s). El LUNES, ANUNCIAR la manda a WhatsApp con Apple + Spotify + audio.")
+        print(f"Quedan {len(pend) - len(nuevos)} clase(s). El robot la manda a WhatsApp con Apple + Spotify + audio.")
+        if auto:
+            print("Espero 2 minutos a que GitHub Pages publique el feed antes de anunciar ...")
+            time.sleep(120)
         return 0
     print("*** No se marco ninguna como subida (revisa el mensaje de goteo arriba). Se reintenta en la proxima corrida.")
     return rc or 1
@@ -504,6 +530,6 @@ if __name__ == "__main__":
     elif modo == "setup":
         setup()
     elif modo == "semana":
-        sys.exit(semana(forzar="--forzar" in sys.argv))
+        sys.exit(semana(forzar="--forzar" in sys.argv, auto="auto" in sys.argv))
     else:
         revisar()
