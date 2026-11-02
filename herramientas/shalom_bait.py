@@ -462,7 +462,7 @@ def subir_portada_local(archivo_repo):
     return False
 
 
-def semana(forzar=False, auto=False):
+def semana(forzar=False, auto=False, sin_portada=False):
     """Sube la clase de ESTA semana: la siguiente sin publicar. Una vez por semana.
     auto=True (lo usa ANUNCIAR.bat): sin preguntas; solo de domingo a miercoles, para que el robot
     todavia tenga el lunes-jueves para mandarla."""
@@ -492,6 +492,7 @@ def semana(forzar=False, auto=False):
         print(f"Ya se subio algo el {ult:%d/%m/%Y %H:%M} (hace menos de 6 dias). No subo otra clase esta semana.")
         print("Si de verdad quieres subir otra ahora:  python shalom_bait.py semana --forzar")
         return 0
+    cfg_original = None
     try:
         portadas = json.loads((AQUI / "config.json").read_text(encoding="utf-8")).get("portadas", {})
     except Exception:
@@ -499,6 +500,14 @@ def semana(forzar=False, auto=False):
     if SERIE in portadas:
         ok = url_existe(f"{URL_PAGES}/{portadas[SERIE]}")
         if ok is False and subir_portada_local(portadas[SERIE]):
+            ok = True
+        if ok is False and sin_portada:
+            print(f"(la portada {portadas[SERIE]} no esta en internet: esta clase sale con la portada general del podcast)")
+            cfgp = AQUI / "config.json"
+            cfg_original = cfgp.read_text(encoding="utf-8")
+            c2 = json.loads(cfg_original)
+            c2["portadas"].pop(SERIE, None)
+            cfgp.write_text(json.dumps(c2, ensure_ascii=False, indent=2), encoding="utf-8")
             ok = True
         if ok is False:
             print(f"*** La portada {portadas[SERIE]} todavia NO esta en {URL_PAGES}. No subo nada.")
@@ -508,7 +517,11 @@ def semana(forzar=False, auto=False):
         if ok is None:
             print("(no pude comprobar la portada en internet; sigo)")
     print(f"Pendientes: {len(pend)}.  Esta semana sube: {Path(pend[0]).stem}\n", flush=True)
-    rc = subprocess.run([sys.executable, "goteo.py"], cwd=str(AQUI)).returncode
+    try:
+        rc = subprocess.run([sys.executable, "goteo.py"], cwd=str(AQUI)).returncode
+    finally:
+        if cfg_original is not None:
+            (AQUI / "config.json").write_text(cfg_original, encoding="utf-8")
     despues = publicados()
     nuevos = [n for n in pend if n in despues]
     print()
@@ -530,6 +543,6 @@ if __name__ == "__main__":
     elif modo == "setup":
         setup()
     elif modo == "semana":
-        sys.exit(semana(forzar="--forzar" in sys.argv, auto="auto" in sys.argv))
+        sys.exit(semana(forzar="--forzar" in sys.argv, auto="auto" in sys.argv, sin_portada="--sin-portada" in sys.argv))
     else:
         revisar()
